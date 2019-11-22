@@ -22,8 +22,7 @@ func DeserializeProtoValuesFromGroup(group *cb.ConfigGroup, protosStructs ...int
 	}
 
 	for key, value := range group.Values {
-
-		logger.Infof("begin Deserialize for key: %s   value: %s", key, string(value.Value))
+		logger.Debugf("deserialize for key: %s   value: %s", key, string(value.Value))
 		if _, err := sv.Deserialize(key, value.Value); err != nil {
 			return err
 		}
@@ -46,8 +45,7 @@ func NewStandardValues(protosStructs ...interface{}) (*StandardValues, error) {
 	}
 
 	for _, protosStruct := range protosStructs {
-		//logger.Debugf("Initializing protos for %T\n", protosStruct)
-		logger.Infof("Initializing protos for %T\n", protosStruct)
+		logger.Debugf("Initializing protos for %T\n", protosStruct)
 		if err := sv.initializeProtosStruct(reflect.ValueOf(protosStruct)); err != nil {
 			return nil, err
 		}

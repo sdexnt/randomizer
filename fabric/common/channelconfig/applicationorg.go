@@ -43,8 +43,6 @@ func NewApplicationOrgConfig(id string, orgGroup *cb.ConfigGroup, mspConfig *MSP
 	protos := &ApplicationOrgProtos{}
 	orgProtos := &OrganizationProtos{}
 
-	logger.Infof("begin DeserializeProtoValuesFromGroup")
-
 	if err := DeserializeProtoValuesFromGroup(orgGroup, protos, orgProtos); err != nil {
 		return nil, errors.Wrap(err, "failed to deserialize values")
 	}
