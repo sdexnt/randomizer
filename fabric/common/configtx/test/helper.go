@@ -68,6 +68,7 @@ func MakeGenesisBlockFromMSPs(chainID string, appMSPConf, ordererMSPConf *msppro
 		Value:     utils.MarshalOrPanic(channelconfig.AnchorPeersValue([]*pb.AnchorPeer{}).Value()),
 		ModPolicy: channelconfig.AdminsPolicyKey,
 	}
+
 	// add nikulin.s
 	applicationOrg.Values[channelconfig.EndorsersKey] = &cb.ConfigValue{
 		Value:     utils.MarshalOrPanic(channelconfig.EndorsersValue([]*pb.Endorser{}).Value()),
