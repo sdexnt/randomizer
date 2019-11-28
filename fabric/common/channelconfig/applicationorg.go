@@ -24,7 +24,7 @@ const (
 // ApplicationOrgProtos are deserialized from the config
 type ApplicationOrgProtos struct {
 	AnchorPeers *pb.AnchorPeers
-	Endorsers   *pb.Endorsers
+	Endorsers   *pb.Endorsers     // add nikulin.s
 }
 
 // ApplicationOrgConfig defines the configuration for an application org
@@ -70,7 +70,7 @@ func (aog *ApplicationOrgConfig) AnchorPeers() []*pb.AnchorPeer {
 }
 
 // Endorsers returns the list of endorsers of this Organization
-func (aog *ApplicationOrgConfig) Endorsers() []*pb.Endorser {
+func (aog *ApplicationOrgConfig) Endorsers() []*pb.Endorser {      // add nikulin.s
 	return aog.protos.Endorsers.Endorsers
 }
 

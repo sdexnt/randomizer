@@ -32,7 +32,7 @@ type ApplicationOrg interface {
 
 	// AnchorPeers returns the list of gossip anchor peers
 	AnchorPeers() []*pb.AnchorPeer
-	Endorsers() []*pb.Endorser
+	Endorsers() []*pb.Endorser // add nikulin.s
 }
 
 // OrdererOrg stores the per org orderer config.

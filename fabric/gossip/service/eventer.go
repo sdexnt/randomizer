@@ -47,7 +47,7 @@ type ConfigProcessor interface {
 
 type configStore struct {
 	anchorPeers []*peer.AnchorPeer
-	endorsers   []*peer.Endorser
+	endorsers   []*peer.Endorser // add nikulin.s
 	orgMap      map[string]channelconfig.ApplicationOrg
 }
 
@@ -78,7 +78,6 @@ func (ce *configEventer) ProcessConfigUpdate(config Config) {
 	// begin test nasa
 	logger.Infof("Begin DeepEqual for channel %s", config.ChainID())
 
-
 	if ce.lastConfig != nil && reflect.DeepEqual(ce.lastConfig.orgMap, orgMap) {
 		logger.Debugf("Ignoring new config for channel %s because it contained no anchor peer updates", config.ChainID())
 	} else {
@@ -88,6 +87,7 @@ func (ce *configEventer) ProcessConfigUpdate(config Config) {
 			newAnchorPeers = append(newAnchorPeers, group.AnchorPeers()...)
 		}
 
+		// add nikulin.s
 		var newEndorsers []*peer.Endorser
 		for _, group := range config.ApplicationOrgs() {
 			newEndorsers = append(newEndorsers, group.Endorsers()...)
@@ -143,6 +143,7 @@ func (ag *appGrp) AnchorPeers() []*peer.AnchorPeer {
 	return ag.anchorPeers
 }
 
+// add nikulin.s
 func (ag *appGrp) Endorsers() []*peer.Endorser {
 	return ag.endorsers
 }

@@ -208,6 +208,7 @@ func AnchorPeersValue(anchorPeers []*pb.AnchorPeer) *StandardConfigValue {
 	}
 }
 
+// add nikulin.s
 // EndorsersValue returns the config definition for an org's endorsers.
 // It is a value for the /Channel/Application/*.
 func EndorsersValue(endorsers []*pb.Endorser) *StandardConfigValue {

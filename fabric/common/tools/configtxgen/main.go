@@ -99,6 +99,7 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 		}
 	}
 
+	// add nikulin.s
 	endorsers := make([]*pb.Endorser, len(org.Endorsers))
 	for i, endorser := range org.Endorsers {
 		endorsers[i] = &pb.Endorser{
@@ -138,6 +139,7 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 		Value:     utils.MarshalOrPanic(channelconfig.AnchorPeersValue(anchorPeers).Value()),
 		ModPolicy: channelconfig.AdminsPolicyKey,
 	}
+	// add nikulin.s
 	configUpdate.WriteSet.Groups[channelconfig.ApplicationGroupKey].Groups[org.Name].Values[channelconfig.EndorsersKey] = &cb.ConfigValue{
 		Value:     utils.MarshalOrPanic(channelconfig.EndorsersValue(endorsers).Value()),
 		ModPolicy: channelconfig.AdminsPolicyKey,

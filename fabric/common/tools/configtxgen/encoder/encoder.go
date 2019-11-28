@@ -360,10 +360,9 @@ func NewApplicationOrgGroup(conf *genesisconfig.Organization) (*cb.ConfigGroup, 
 		addValue(applicationOrgGroup, channelconfig.AnchorPeersValue(anchorProtos), channelconfig.AdminsPolicyKey)
 	}
 
-	/************* begin test endorsers ************/
+	/************* begin add nikulin.s ************/
 
-	fmt.Println("encoder - NewApplicationOrgGroup")
-	fmt.Printf("endorsers len: %d\n", len(conf.Endorsers))
+	fmt.Printf("endorsers count: %d\n", len(conf.Endorsers))
 
 	var endorsersProtos []*pb.Endorser
 	for _, endorser := range conf.Endorsers {
@@ -377,7 +376,7 @@ func NewApplicationOrgGroup(conf *genesisconfig.Organization) (*cb.ConfigGroup, 
 		addValue(applicationOrgGroup, channelconfig.EndorsersValue(endorsersProtos), channelconfig.AdminsPolicyKey)
 	}
 
-	/************** end test endorsers *************/
+	/************** end add nikulin.s *************/
 
 	applicationOrgGroup.ModPolicy = channelconfig.AdminsPolicyKey
 	return applicationOrgGroup, nil
