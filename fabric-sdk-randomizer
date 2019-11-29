@@ -1,0 +1,1246 @@
+diff --git a/go.mod b/go.mod
+index 768efa7f..1ac9e107 100644
+--- a/go.mod
++++ b/go.mod
+@@ -40,7 +40,6 @@ require (
+ 	github.com/stretchr/testify v1.3.0
+ 	golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2
+ 	golang.org/x/net v0.0.0-20190311183353-d8887717615a
+-	google.golang.org/appengine v1.4.0 // indirect
+ 	google.golang.org/genproto v0.0.0-20190327125643-d831d65fe17d // indirect
+ 	google.golang.org/grpc v1.23.0
+ 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
+diff --git a/internal/github.com/hyperledger/fabric/common/channelconfig/api.go b/internal/github.com/hyperledger/fabric/common/channelconfig/api.go
+index 03e59088..10ba848b 100644
+--- a/internal/github.com/hyperledger/fabric/common/channelconfig/api.go
++++ b/internal/github.com/hyperledger/fabric/common/channelconfig/api.go
+@@ -3,10 +3,6 @@ Copyright IBM Corp. All Rights Reserved.
+ 
+ SPDX-License-Identifier: Apache-2.0
+ */
+-/*
+-Notice: This file has been modified for Hyperledger Fabric SDK Go usage.
+-Please review third_party pinning scripts and patches for more details.
+-*/
+ 
+ package channelconfig
+ 
+@@ -36,6 +32,7 @@ type ApplicationOrg interface {
+ 
+ 	// AnchorPeers returns the list of gossip anchor peers
+ 	AnchorPeers() []*pb.AnchorPeer
++	Endorsers() []*pb.Endorser
+ }
+ 
+ // OrdererOrg stores the per org orderer config.
+@@ -174,27 +171,20 @@ type ApplicationCapabilities interface {
+ 	V1_3Validation() bool
+ 
+ 	// StorePvtDataOfInvalidTx() returns true if the peer needs to store the pvtData of
+-	// invalid transactions (as introduced in v142).
++	// invalid transactions.
+ 	StorePvtDataOfInvalidTx() bool
+ 
+-	// V2_0Validation returns true if this channel supports transaction validation
+-	// as introduced in v2.0. This includes:
+-	//  - new chaincode lifecycle
+-	//  - implicit per-org collections
+-	V2_0Validation() bool
+-
+-	// LifecycleV20 indicates whether the peer should use the deprecated and problematic
+-	// v1.x lifecycle, or whether it should use the newer per channel approve/commit definitions
+-	// process introduced in v2.0.  Note, this should only be used on the endorsing side
+-	// of peer processing, so that we may safely remove all checks against it in v2.1.
+-	LifecycleV20() bool
+-
+-	// MetadataLifecycle always returns false
++	// MetadataLifecycle indicates whether the peer should use the deprecated and problematic
++	// v1.0/v1.1 lifecycle, or whether it should use the newer per channel peer local chaincode
++	// metadata package approach planned for release with Fabric v1.2
+ 	MetadataLifecycle() bool
+ 
+ 	// KeyLevelEndorsement returns true if this channel supports endorsement
+ 	// policies expressible at a ledger key granularity, as described in FAB-8812
+ 	KeyLevelEndorsement() bool
++
++	// FabToken returns true if this channel supports FabToken functions
++	FabToken() bool
+ }
+ 
+ // OrdererCapabilities defines the capabilities for the orderer portion of a channel
+@@ -216,11 +206,6 @@ type OrdererCapabilities interface {
+ 
+ 	// ConsensusTypeMigration checks whether the orderer permits a consensus-type migration.
+ 	ConsensusTypeMigration() bool
+-
+-	// UseChannelCreationPolicyAsAdmins checks whether the orderer should use more sophisticated
+-	// channel creation logic using channel creation policy as the Admins policy if
+-	// the creation transaction appears to support it.
+-	UseChannelCreationPolicyAsAdmins() bool
+ }
+ 
+ // PolicyMapper is an interface for
+diff --git a/internal/github.com/hyperledger/fabric/common/channelconfig/applicationorg.go b/internal/github.com/hyperledger/fabric/common/channelconfig/applicationorg.go
+index 56e77eb6..83d87fda 100644
+--- a/internal/github.com/hyperledger/fabric/common/channelconfig/applicationorg.go
++++ b/internal/github.com/hyperledger/fabric/common/channelconfig/applicationorg.go
+@@ -3,10 +3,6 @@ Copyright IBM Corp. All Rights Reserved.
+ 
+ SPDX-License-Identifier: Apache-2.0
+ */
+-/*
+-Notice: This file has been modified for Hyperledger Fabric SDK Go usage.
+-Please review third_party pinning scripts and patches for more details.
+-*/
+ 
+ package channelconfig
+ 
+@@ -21,11 +17,14 @@ import (
+ const (
+ 	// AnchorPeersKey is the key name for the AnchorPeers ConfigValue
+ 	AnchorPeersKey = "AnchorPeers"
++	// EndorsersKey is the key name for the Endorsers ConfigValue
++	EndorsersKey = "Endorsers"
+ )
+ 
+ // ApplicationOrgProtos are deserialized from the config
+ type ApplicationOrgProtos struct {
+ 	AnchorPeers *pb.AnchorPeers
++	Endorsers   *pb.Endorsers
+ }
+ 
+ // ApplicationOrgConfig defines the configuration for an application org
+@@ -44,6 +43,8 @@ func NewApplicationOrgConfig(id string, orgGroup *cb.ConfigGroup, mspConfig *MSP
+ 	protos := &ApplicationOrgProtos{}
+ 	orgProtos := &OrganizationProtos{}
+ 
++	logger.Infof("begin DeserializeProtoValuesFromGroup")
++
+ 	if err := DeserializeProtoValuesFromGroup(orgGroup, protos, orgProtos); err != nil {
+ 		return nil, errors.Wrap(err, "failed to deserialize values")
+ 	}
+@@ -70,6 +71,11 @@ func (aog *ApplicationOrgConfig) AnchorPeers() []*pb.AnchorPeer {
+ 	return aog.protos.AnchorPeers.AnchorPeers
+ }
+ 
++// Endorsers returns the list of endorsers of this Organization
++func (aog *ApplicationOrgConfig) Endorsers() []*pb.Endorser {
++	return aog.protos.Endorsers.Endorsers
++}
++
+ func (aoc *ApplicationOrgConfig) Validate() error {
+ 	logger.Debugf("Anchor peers for org %s are %v", aoc.name, aoc.protos.AnchorPeers)
+ 	return aoc.OrganizationConfig.Validate()
+diff --git a/internal/github.com/hyperledger/fabric/common/channelconfig/util.go b/internal/github.com/hyperledger/fabric/common/channelconfig/util.go
+index 95d39ce9..3c181abb 100644
+--- a/internal/github.com/hyperledger/fabric/common/channelconfig/util.go
++++ b/internal/github.com/hyperledger/fabric/common/channelconfig/util.go
+@@ -23,7 +23,6 @@ import (
+ 	pb "github.com/hyperledger/fabric-protos-go/peer"
+ 	"github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/bccsp"
+ 	"github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/protoutil"
+-	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -245,7 +244,7 @@ func ACLValues(acls map[string]string) *StandardConfigValue {
+ }
+ 
+ // ValidateCapabilities validates whether the peer can meet the capabilities requirement in the given config block
+-func ValidateCapabilities(block *cb.Block, bccsp core.CryptoSuite) error {
++func ValidateCapabilities(block *cb.Block) error {
+ 	envelopeConfig, err := protoutil.ExtractEnvelope(block, 0)
+ 	if err != nil {
+ 		return errors.Errorf("failed to %s", err)
+@@ -275,7 +274,7 @@ func ValidateCapabilities(block *cb.Block, bccsp core.CryptoSuite) error {
+ 			"configuration group", ApplicationGroupKey)
+ 	}
+ 
+-	cc, err := NewChannelConfig(configEnv.Config.ChannelGroup, bccsp)
++	cc, err := NewChannelConfig(configEnv.Config.ChannelGroup)
+ 	if err != nil {
+ 		return errors.Errorf("no valid channel configuration found due to %s", err)
+ 	}
+diff --git a/internal/github.com/hyperledger/fabric/common/tools/protolator/protoext/peerext/configuration.go b/internal/github.com/hyperledger/fabric/common/tools/protolator/protoext/peerext/configuration.go
+index ea9d751d..4bae9db1 100644
+--- a/internal/github.com/hyperledger/fabric/common/tools/protolator/protoext/peerext/configuration.go
++++ b/internal/github.com/hyperledger/fabric/common/tools/protolator/protoext/peerext/configuration.go
+@@ -14,9 +14,9 @@ import (
+ 	"fmt"
+ 
+ 	"github.com/golang/protobuf/proto"
+-	"github.com/hyperledger/fabric-protos-go/common"
+-	"github.com/hyperledger/fabric-protos-go/msp"
+-	"github.com/hyperledger/fabric-protos-go/peer"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/msp"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/peer"
+ )
+ 
+ type DynamicApplicationGroup struct {
+@@ -136,6 +136,8 @@ func (daocv *DynamicApplicationOrgConfigValue) StaticallyOpaqueFieldProto(name s
+ 		return &msp.MSPConfig{}, nil
+ 	case "AnchorPeers":
+ 		return &peer.AnchorPeers{}, nil
++	case "Endorsers":
++		return &peer.Endorsers{}, nil
+ 	default:
+ 		return nil, fmt.Errorf("Unknown Application Org ConfigValue name: %s", daocv.name)
+ 	}
+diff --git a/internal/github.com/hyperledger/fabric/protos/peer/configuration.pb.go b/internal/github.com/hyperledger/fabric/protos/peer/configuration.pb.go
+new file mode 100644
+index 00000000..617932f9
+--- /dev/null
++++ b/internal/github.com/hyperledger/fabric/protos/peer/configuration.pb.go
+@@ -0,0 +1,313 @@
++// Code generated by protoc-gen-go. DO NOT EDIT.
++// source: configuration.proto
++
++package peer
++
++import (
++	fmt "fmt"
++	math "math"
++
++	proto "github.com/golang/protobuf/proto"
++)
++
++// Reference imports to suppress errors if they are not otherwise used.
++var _ = proto.Marshal
++var _ = fmt.Errorf
++var _ = math.Inf
++
++// This is a compile-time assertion to ensure that this generated file
++// is compatible with the proto package it is being compiled against.
++// A compilation error at this line likely means your copy of the
++// proto package needs to be updated.
++const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
++
++// AnchorPeers simply represents list of anchor peers which is used in ConfigurationItem
++type AnchorPeers struct {
++	AnchorPeers          []*AnchorPeer `protobuf:"bytes,1,rep,name=anchor_peers,json=anchorPeers,proto3" json:"anchor_peers,omitempty"`
++	XXX_NoUnkeyedLiteral struct{}      `json:"-"`
++	XXX_unrecognized     []byte        `json:"-"`
++	XXX_sizecache        int32         `json:"-"`
++}
++
++func (m *AnchorPeers) Reset()         { *m = AnchorPeers{} }
++func (m *AnchorPeers) String() string { return proto.CompactTextString(m) }
++func (*AnchorPeers) ProtoMessage()    {}
++func (*AnchorPeers) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{0}
++}
++
++func (m *AnchorPeers) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_AnchorPeers.Unmarshal(m, b)
++}
++func (m *AnchorPeers) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_AnchorPeers.Marshal(b, m, deterministic)
++}
++func (m *AnchorPeers) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_AnchorPeers.Merge(m, src)
++}
++func (m *AnchorPeers) XXX_Size() int {
++	return xxx_messageInfo_AnchorPeers.Size(m)
++}
++func (m *AnchorPeers) XXX_DiscardUnknown() {
++	xxx_messageInfo_AnchorPeers.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_AnchorPeers proto.InternalMessageInfo
++
++func (m *AnchorPeers) GetAnchorPeers() []*AnchorPeer {
++	if m != nil {
++		return m.AnchorPeers
++	}
++	return nil
++}
++
++// AnchorPeer message structure which provides information about anchor peer, it includes host name,
++// port number and peer certificate.
++type AnchorPeer struct {
++	// DNS host name of the anchor peer
++	Host string `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
++	// The port number
++	Port                 int32    `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
++	XXX_NoUnkeyedLiteral struct{} `json:"-"`
++	XXX_unrecognized     []byte   `json:"-"`
++	XXX_sizecache        int32    `json:"-"`
++}
++
++func (m *AnchorPeer) Reset()         { *m = AnchorPeer{} }
++func (m *AnchorPeer) String() string { return proto.CompactTextString(m) }
++func (*AnchorPeer) ProtoMessage()    {}
++func (*AnchorPeer) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{1}
++}
++
++func (m *AnchorPeer) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_AnchorPeer.Unmarshal(m, b)
++}
++func (m *AnchorPeer) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_AnchorPeer.Marshal(b, m, deterministic)
++}
++func (m *AnchorPeer) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_AnchorPeer.Merge(m, src)
++}
++func (m *AnchorPeer) XXX_Size() int {
++	return xxx_messageInfo_AnchorPeer.Size(m)
++}
++func (m *AnchorPeer) XXX_DiscardUnknown() {
++	xxx_messageInfo_AnchorPeer.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_AnchorPeer proto.InternalMessageInfo
++
++func (m *AnchorPeer) GetHost() string {
++	if m != nil {
++		return m.Host
++	}
++	return ""
++}
++
++func (m *AnchorPeer) GetPort() int32 {
++	if m != nil {
++		return m.Port
++	}
++	return 0
++}
++
++// Endorsers simply represents list of endorsing peers which is used in ConfigurationItem
++type Endorsers struct {
++	Endorsers            []*Endorser `protobuf:"bytes,1,rep,name=endorsers,proto3" json:"endorsers,omitempty"`
++	XXX_NoUnkeyedLiteral struct{}    `json:"-"`
++	XXX_unrecognized     []byte      `json:"-"`
++	XXX_sizecache        int32       `json:"-"`
++}
++
++func (m *Endorsers) Reset()         { *m = Endorsers{} }
++func (m *Endorsers) String() string { return proto.CompactTextString(m) }
++func (*Endorsers) ProtoMessage()    {}
++func (*Endorsers) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{2}
++}
++
++func (m *Endorsers) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_Endorsers.Unmarshal(m, b)
++}
++func (m *Endorsers) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_Endorsers.Marshal(b, m, deterministic)
++}
++func (m *Endorsers) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_Endorsers.Merge(m, src)
++}
++func (m *Endorsers) XXX_Size() int {
++	return xxx_messageInfo_Endorsers.Size(m)
++}
++func (m *Endorsers) XXX_DiscardUnknown() {
++	xxx_messageInfo_Endorsers.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_Endorsers proto.InternalMessageInfo
++
++func (m *Endorsers) GetEndorsers() []*Endorser {
++	if m != nil {
++		return m.Endorsers
++	}
++	return nil
++}
++
++// Endorser message structure which provides information about endorser, it includes host address.
++type Endorser struct {
++	// DNS host name of the endorser
++	Address              string   `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
++	XXX_NoUnkeyedLiteral struct{} `json:"-"`
++	XXX_unrecognized     []byte   `json:"-"`
++	XXX_sizecache        int32    `json:"-"`
++}
++
++func (m *Endorser) Reset()         { *m = Endorser{} }
++func (m *Endorser) String() string { return proto.CompactTextString(m) }
++func (*Endorser) ProtoMessage()    {}
++func (*Endorser) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{3}
++}
++
++func (m *Endorser) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_Endorser.Unmarshal(m, b)
++}
++func (m *Endorser) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_Endorser.Marshal(b, m, deterministic)
++}
++func (m *Endorser) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_Endorser.Merge(m, src)
++}
++func (m *Endorser) XXX_Size() int {
++	return xxx_messageInfo_Endorser.Size(m)
++}
++func (m *Endorser) XXX_DiscardUnknown() {
++	xxx_messageInfo_Endorser.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_Endorser proto.InternalMessageInfo
++
++func (m *Endorser) GetAddress() string {
++	if m != nil {
++		return m.Address
++	}
++	return ""
++}
++
++// APIResource represents an API resource in the peer whose ACL
++// is determined by the policy_ref field
++type APIResource struct {
++	PolicyRef            string   `protobuf:"bytes,1,opt,name=policy_ref,json=policyRef,proto3" json:"policy_ref,omitempty"`
++	XXX_NoUnkeyedLiteral struct{} `json:"-"`
++	XXX_unrecognized     []byte   `json:"-"`
++	XXX_sizecache        int32    `json:"-"`
++}
++
++func (m *APIResource) Reset()         { *m = APIResource{} }
++func (m *APIResource) String() string { return proto.CompactTextString(m) }
++func (*APIResource) ProtoMessage()    {}
++func (*APIResource) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{4}
++}
++
++func (m *APIResource) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_APIResource.Unmarshal(m, b)
++}
++func (m *APIResource) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_APIResource.Marshal(b, m, deterministic)
++}
++func (m *APIResource) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_APIResource.Merge(m, src)
++}
++func (m *APIResource) XXX_Size() int {
++	return xxx_messageInfo_APIResource.Size(m)
++}
++func (m *APIResource) XXX_DiscardUnknown() {
++	xxx_messageInfo_APIResource.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_APIResource proto.InternalMessageInfo
++
++func (m *APIResource) GetPolicyRef() string {
++	if m != nil {
++		return m.PolicyRef
++	}
++	return ""
++}
++
++// ACLs provides mappings for resources in a channel. APIResource encapsulates
++// reference to a policy used to determine ACL for the resource
++type ACLs struct {
++	Acls                 map[string]*APIResource `protobuf:"bytes,1,rep,name=acls,proto3" json:"acls,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
++	XXX_NoUnkeyedLiteral struct{}                `json:"-"`
++	XXX_unrecognized     []byte                  `json:"-"`
++	XXX_sizecache        int32                   `json:"-"`
++}
++
++func (m *ACLs) Reset()         { *m = ACLs{} }
++func (m *ACLs) String() string { return proto.CompactTextString(m) }
++func (*ACLs) ProtoMessage()    {}
++func (*ACLs) Descriptor() ([]byte, []int) {
++	return fileDescriptor_415c9e57263f32ab, []int{5}
++}
++
++func (m *ACLs) XXX_Unmarshal(b []byte) error {
++	return xxx_messageInfo_ACLs.Unmarshal(m, b)
++}
++func (m *ACLs) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
++	return xxx_messageInfo_ACLs.Marshal(b, m, deterministic)
++}
++func (m *ACLs) XXX_Merge(src proto.Message) {
++	xxx_messageInfo_ACLs.Merge(m, src)
++}
++func (m *ACLs) XXX_Size() int {
++	return xxx_messageInfo_ACLs.Size(m)
++}
++func (m *ACLs) XXX_DiscardUnknown() {
++	xxx_messageInfo_ACLs.DiscardUnknown(m)
++}
++
++var xxx_messageInfo_ACLs proto.InternalMessageInfo
++
++func (m *ACLs) GetAcls() map[string]*APIResource {
++	if m != nil {
++		return m.Acls
++	}
++	return nil
++}
++
++func init() {
++	proto.RegisterType((*AnchorPeers)(nil), "protos.AnchorPeers")
++	proto.RegisterType((*AnchorPeer)(nil), "protos.AnchorPeer")
++	proto.RegisterType((*Endorsers)(nil), "protos.Endorsers")
++	proto.RegisterType((*Endorser)(nil), "protos.Endorser")
++	proto.RegisterType((*APIResource)(nil), "protos.APIResource")
++	proto.RegisterType((*ACLs)(nil), "protos.ACLs")
++	proto.RegisterMapType((map[string]*APIResource)(nil), "protos.ACLs.AclsEntry")
++}
++
++func init() { proto.RegisterFile("configuration.proto", fileDescriptor_415c9e57263f32ab) }
++
++var fileDescriptor_415c9e57263f32ab = []byte{
++	// 331 bytes of a gzipped FileDescriptorProto
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x4c, 0x91, 0xcd, 0x4b, 0xf3, 0x40,
++	0x10, 0xc6, 0x49, 0x3f, 0xde, 0xd7, 0x4c, 0x3c, 0x94, 0x2d, 0x48, 0x10, 0x84, 0x12, 0x3c, 0xb4,
++	0x22, 0x1b, 0xa8, 0x0a, 0xa2, 0xa7, 0x58, 0x7b, 0x10, 0x0a, 0x96, 0x3d, 0x7a, 0x29, 0xdb, 0xcd,
++	0xe6, 0x03, 0x63, 0x36, 0xcc, 0x26, 0x42, 0x6e, 0xfe, 0xe9, 0x92, 0x8f, 0x6d, 0x3c, 0x65, 0x9e,
++	0x27, 0xbf, 0xd9, 0x67, 0x86, 0x81, 0xb9, 0x50, 0x79, 0x94, 0xc6, 0x15, 0xf2, 0x32, 0x55, 0x39,
++	0x2d, 0x50, 0x95, 0x8a, 0xfc, 0x6b, 0x3f, 0xda, 0x7b, 0x05, 0x27, 0xc8, 0x45, 0xa2, 0x70, 0x2f,
++	0x25, 0x6a, 0xf2, 0x00, 0xe7, 0xbc, 0x95, 0x87, 0xa2, 0xd1, 0xae, 0xb5, 0x18, 0x2f, 0x9d, 0x35,
++	0xe9, 0x9a, 0x34, 0x1d, 0x50, 0xe6, 0xf0, 0xa1, 0xcd, 0xbb, 0x07, 0x18, 0x7e, 0x11, 0x02, 0x93,
++	0x44, 0xe9, 0xd2, 0xb5, 0x16, 0xd6, 0xd2, 0x66, 0x6d, 0xdd, 0x78, 0x85, 0xc2, 0xd2, 0x1d, 0x2d,
++	0xac, 0xe5, 0x94, 0xb5, 0xb5, 0xf7, 0x0c, 0xf6, 0x36, 0x0f, 0x15, 0xea, 0x26, 0x99, 0x82, 0x2d,
++	0x8d, 0xe8, 0x63, 0x67, 0x26, 0xd6, 0x50, 0x6c, 0x40, 0xbc, 0x6b, 0x38, 0x33, 0x36, 0x71, 0xe1,
++	0x3f, 0x0f, 0x43, 0x94, 0x5a, 0xf7, 0x99, 0x46, 0x7a, 0xb7, 0xe0, 0x04, 0xfb, 0x37, 0x26, 0xb5,
++	0xaa, 0x50, 0x48, 0x72, 0x05, 0x50, 0xa8, 0x2c, 0x15, 0xf5, 0x01, 0x65, 0xd4, 0xb3, 0x76, 0xe7,
++	0x30, 0x19, 0x79, 0x3f, 0x16, 0x4c, 0x82, 0xcd, 0x4e, 0x93, 0x1b, 0x98, 0x70, 0x91, 0x99, 0x39,
++	0x2e, 0x4e, 0xeb, 0x6f, 0x76, 0x9a, 0x06, 0x22, 0xd3, 0xdb, 0xbc, 0xc4, 0x9a, 0xb5, 0xcc, 0xe5,
++	0x0e, 0xec, 0x93, 0x45, 0x66, 0x30, 0xfe, 0x94, 0x75, 0xff, 0x72, 0x53, 0x92, 0x15, 0x4c, 0xbf,
++	0x79, 0x56, 0xc9, 0x76, 0x73, 0x67, 0x3d, 0x3f, 0xbd, 0x35, 0x8c, 0xc5, 0x3a, 0xe2, 0x69, 0xf4,
++	0x68, 0xbd, 0xbc, 0x83, 0xa7, 0x30, 0xa6, 0x49, 0x5d, 0x48, 0xcc, 0x64, 0x18, 0x4b, 0xa4, 0x11,
++	0x3f, 0x62, 0x2a, 0x4c, 0x5f, 0x73, 0x97, 0x8f, 0x55, 0x9c, 0x96, 0x49, 0x75, 0xa4, 0x42, 0x7d,
++	0xf9, 0x7f, 0x50, 0xbf, 0x43, 0xfd, 0x0e, 0xf5, 0x1b, 0xf4, 0xd8, 0x1d, 0xfa, 0xee, 0x37, 0x00,
++	0x00, 0xff, 0xff, 0xa5, 0xd8, 0x04, 0x88, 0x06, 0x02, 0x00, 0x00,
++}
+diff --git a/pkg/client/common/selection/customselection/ccpolicyprovider.go b/pkg/client/common/selection/customselection/ccpolicyprovider.go
+new file mode 100644
+index 00000000..bbf744fa
+--- /dev/null
++++ b/pkg/client/common/selection/customselection/ccpolicyprovider.go
+@@ -0,0 +1,187 @@
++package customselection
++
++import (
++	"fmt"
++	"sort"
++	"strings"
++	"sync"
++
++	"github.com/golang/protobuf/proto"
++	"github.com/pkg/errors"
++
++	"github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/core/common/ccprovider"
++	"github.com/hyperledger/fabric-sdk-go/pkg/client/channel"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/logging"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
++	contextImpl "github.com/hyperledger/fabric-sdk-go/pkg/context"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
++)
++
++const loggerModule = "fabsdk/client"
++
++var logger = logging.NewLogger(loggerModule)
++
++const (
++	ccDataProviderSCC      = "lscc"
++	ccDataProviderfunction = "getccdata"
++)
++
++type CCPolicyProvider interface {
++	GetChaincodePolicy(chaincodeID string) (*common.SignaturePolicyEnvelope, error)
++}
++
++func newCCPolicyProvider(ctx context.Client, discovery fab.DiscoveryService, channelID string) (CCPolicyProvider, error) {
++	if channelID == "" {
++		return nil, errors.New("Must provide channel ID for cc policy provider")
++	}
++
++	cpp := ccPolicyProvider{
++		context:   ctx,
++		channelID: channelID,
++		discovery: discovery,
++		ccDataMap: make(map[string]*ccprovider.ChaincodeData),
++	}
++
++	return &cpp, nil
++}
++
++type ccPolicyProvider struct {
++	context   context.Client
++	channelID string
++	discovery fab.DiscoveryService
++	ccDataMap map[string]*ccprovider.ChaincodeData
++	mutex     sync.RWMutex
++}
++
++func (dp *ccPolicyProvider) GetChaincodePolicy(chaincodeID string) (*common.SignaturePolicyEnvelope, error) {
++	if chaincodeID == "" {
++		return nil, errors.New("Must provide chaincode ID")
++	}
++
++	key := newResolverKey(dp.channelID, chaincodeID)
++	var ccData *ccprovider.ChaincodeData
++
++	dp.mutex.RLock()
++	ccData = dp.ccDataMap[chaincodeID]
++	dp.mutex.RUnlock()
++	if ccData != nil {
++		return unmarshalPolicy(ccData.Policy)
++	}
++
++	dp.mutex.Lock()
++	defer dp.mutex.Unlock()
++
++	response, err := dp.queryChaincode(ccDataProviderSCC, ccDataProviderfunction, [][]byte{[]byte(dp.channelID), []byte(chaincodeID)})
++	if err != nil {
++		return nil, errors.WithMessagef(err, "error querying chaincode data for chaincode [%s] on channel [%s]", chaincodeID, dp.channelID)
++	}
++
++	ccData = &ccprovider.ChaincodeData{}
++	err = proto.Unmarshal(response, ccData)
++	if err != nil {
++		return nil, errors.WithMessage(err, "Error unmarshalling chaincode data")
++	}
++
++	dp.ccDataMap[key.String()] = ccData
++
++	return unmarshalPolicy(ccData.Policy)
++}
++
++func unmarshalPolicy(policy []byte) (*common.SignaturePolicyEnvelope, error) {
++
++	sigPolicyEnv := &common.SignaturePolicyEnvelope{}
++	if err := proto.Unmarshal(policy, sigPolicyEnv); err != nil {
++		return nil, errors.WithMessage(err, "error unmarshalling SignaturePolicyEnvelope")
++	}
++
++	return sigPolicyEnv, nil
++}
++
++func (dp *ccPolicyProvider) queryChaincode(ccID string, ccFcn string, ccArgs [][]byte) ([]byte, error) {
++	logger.Debugf("queryChaincode channelID:%s", dp.channelID)
++
++	var queryErrors []string
++	var response []byte
++
++	//prepare channel context
++	channelContext := dp.getChannelContext()
++
++	//get channel client
++	client, err := channel.New(channelContext)
++	if err != nil {
++		return nil, errors.WithMessage(err, "Unable to create channel client")
++	}
++
++	targetPeers, err := dp.discovery.GetPeers()
++	if err != nil {
++		return nil, status.New(status.ClientStatus, status.NoPeersFound.ToInt32(), err.Error(), nil)
++	}
++
++	for _, peer := range targetPeers {
++
++		// Send query to channel peer
++		request := channel.Request{
++			ChaincodeID: ccID,
++			Fcn:         ccFcn,
++			Args:        ccArgs,
++		}
++
++		resp, err := client.Query(request, channel.WithTargets(peer))
++		if err != nil {
++			logger.Debugf("query peer '%s' returned error for ccID %s, Fcn %s: %s", peer.URL(), ccID, ccFcn, err)
++			queryErrors = append(queryErrors, err.Error())
++			continue
++		} else {
++			// Valid response obtained, stop querying
++			response = resp.Payload
++			break
++		}
++	}
++	logger.Debugf("queryErrors found %d error(s) from %d peers: %+v", len(queryErrors), len(targetPeers), queryErrors)
++
++	// If all queries failed, return error
++	if len(queryErrors) == len(targetPeers) {
++		errMsg := fmt.Sprintf("Error querying peers for channel %s: %s", dp.channelID, strings.Join(queryErrors, "\n"))
++		return nil, errors.New(errMsg)
++	}
++
++	return response, nil
++}
++
++type resolverKey struct {
++	channelID    string
++	chaincodeIDs []string
++	key          string
++}
++
++func (k *resolverKey) String() string {
++	return k.key
++}
++
++func newResolverKey(channelID string, chaincodeIDs ...string) *resolverKey {
++	arr := chaincodeIDs[:]
++	sort.Strings(arr)
++
++	key := channelID + "-"
++	for i, s := range arr {
++		key += s
++		if i+1 < len(arr) {
++			key += ":"
++		}
++	}
++	return &resolverKey{channelID: channelID, chaincodeIDs: arr, key: key}
++}
++
++func (dp *ccPolicyProvider) getChannelContext() context.ChannelProvider {
++	//Get Channel Context
++	return func() (context.Channel, error) {
++		//Get Client Context
++		clientProvider := func() (context.Client, error) {
++			return dp.context, nil
++		}
++
++		return contextImpl.NewChannel(clientProvider, dp.channelID)
++	}
++}
+diff --git a/pkg/client/common/selection/customselection/customselection.go b/pkg/client/common/selection/customselection/customselection.go
+new file mode 100644
+index 00000000..9cfd9ca5
+--- /dev/null
++++ b/pkg/client/common/selection/customselection/customselection.go
+@@ -0,0 +1,417 @@
++package customselection
++
++import (
++	"bytes"
++	"crypto/rand"
++	"fmt"
++	"math/big"
++	"sort"
++	"strings"
++	"time"
++
++	contextImpl "github.com/hyperledger/fabric-sdk-go/pkg/context"
++	"github.com/hyperledger/fabric-sdk-go/pkg/util/concurrent/lazycache"
++	"github.com/hyperledger/fabric-sdk-go/pkg/util/concurrent/lazyref"
++
++	"github.com/hyperledger/fabric-sdk-go/pkg/client/ledger"
++	copts "github.com/hyperledger/fabric-sdk-go/pkg/common/options"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
++	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
++	"github.com/pkg/errors"
++
++	"github.com/hyperledger/fabric-sdk-go/pkg/client/common/selection/dynamicselection/pgresolver"
++)
++
++const defaultCacheTimeout = 30 * time.Minute
++
++// Opt applies a selection provider option
++type Opt func(*SelectionService)
++
++type PeersGroup struct {
++	mspID string
++	peers []*fab.Peer
++}
++
++type EndorsingPeer struct {
++	mspID string
++	name  string
++	url   string
++
++	fab.ProposalProcessor
++}
++
++func (ep *EndorsingPeer) MSPID() string { return ep.mspID }
++func (ep *EndorsingPeer) URL() string   { return ep.url }
++func (ep *EndorsingPeer) Name() string  { return ep.name }
++
++type sortedPeers []*EndorsingPeer
++
++func (sp sortedPeers) Len() int      { return len(sp) }
++func (sp sortedPeers) Swap(i, j int) { sp[i], sp[j] = sp[j], sp[i] }
++func (sp sortedPeers) Less(i, j int) bool {
++	left := strings.ToLower(sp[i].Name())
++	right := strings.ToLower(sp[j].Name())
++	return left < right
++}
++
++type Algorithm interface {
++	//selectEndorsers(ctx context.Client, channelID string) ([]fab.Peer, error)
++	selectEndorsers(ctx context.Client, channelID string) ([]*EndorsingPeer, error)
++}
++
++type algorithmImpl struct {
++	endorsers Algorithm
++}
++
++//func (alg *algorithmImpl) selectEndorsers(ctx context.Client, channelID string) ([]fab.Peer, error) {
++func (alg *algorithmImpl) selectEndorsers(ctx context.Client, channelID string) ([]*EndorsingPeer, error) {
++
++	var peers []*EndorsingPeer
++
++	channelCtx := getChannelContext(ctx, channelID)
++
++	ledgerClient, err := ledger.New(channelCtx)
++	if err != nil {
++		return peers, err
++	}
++
++	resp, err := ledgerClient.QueryInfo()
++	if err != nil {
++		return peers, err
++	}
++	fmt.Printf("block height: %d\n", resp.BCI.Height)
++	fmt.Printf("cur block hash: %v\n", resp.BCI.CurrentBlockHash)
++	fmt.Printf("prev block hash: %v\n", resp.BCI.PreviousBlockHash)
++
++	key, err := ctx.PrivateKey().PublicKey()
++	pubKey, err := key.Bytes()
++	fmt.Printf("public key: %v\n", pubKey)
++
++	var rndmInit []byte
++	rndmInit = append(rndmInit, resp.BCI.CurrentBlockHash...)
++	rndmInit = append(rndmInit, []byte(string(resp.BCI.Height))...)
++	rndmInit = append(rndmInit, pubKey...)
++	fmt.Printf("rndmInit: %v\n", rndmInit)
++
++	/*************** begin test ***************/
++
++	//chPeers := ctx.EndpointConfig().ChannelPeers("mychannel")
++	//for _, peer := range chPeers {
++	//	fmt.Printf("chPeers URL: %s\n", peer.URL)
++	//	if str, ok := peer.NetworkPeer.GRPCOptions["ssl-target-name-override"].(string); ok {
++	//		fmt.Printf("chPeers NetworkPeer.Name: %s\n", str)
++	//	}
++	//}
++
++	cfg, err := ledgerClient.QueryConfig()
++	if err != nil {
++		return peers, err
++	}
++
++	endorsersByGroups := make(map[string][]*EndorsingPeer)
++	for _, endorser := range cfg.Endorsers() {
++		group := endorsersByGroups[endorser.Org]
++		peer := &EndorsingPeer{}
++		peer.mspID = endorser.Org
++		peer.name = endorser.Address
++		group = append(group, peer)
++		endorsersByGroups[endorser.Org] = group
++	}
++
++	var sp sortedPeers
++	for ind := range endorsersByGroups {
++		sp = endorsersByGroups[ind]
++		sort.Sort(sp)
++		endorsersByGroups[ind] = sp
++	}
++
++	fmt.Println("after sorting")
++	for org, group := range endorsersByGroups {
++		fmt.Printf("mspid: %s\n", org)
++		for ind, peer := range group {
++			fmt.Printf("  %d. Name - %s\n", ind, peer.Name())
++		}
++	}
++
++	/**************** end test ****************/
++
++	for _, group := range endorsersByGroups {
++		rndmInd, err := rand.Int(bytes.NewBuffer(rndmInit), big.NewInt(int64(len(group))))
++		if err != nil {
++			return peers, err
++		}
++		index := int(rndmInd.Int64())
++		if index >= len(group) {
++			index = len(group) - 1
++		}
++		peers = append(peers, group[index])
++	}
++
++	fmt.Println("selected peers:")
++	for ind, peer := range peers {
++		if peerCfg, found := ctx.EndpointConfig().PeerConfig(peer.Name()); found {
++			peer.url = peerCfg.URL
++		}
++		fmt.Printf("   %d. MSPID: %s   Name: %s   URL: %s\n", ind, peer.mspID, peer.name, peer.url)
++	}
++
++	//hash(hash(Block)||Seq||Pkey)
++
++	return peers, nil
++}
++
++// WithCacheTimeout sets the expiration timeout of the cache
++func WithCacheTimeout(timeout time.Duration) Opt {
++	return func(s *SelectionService) {
++		s.cacheTimeout = timeout
++	}
++}
++
++// SelectionService chooses endorsing peers for a given set of chaincodes using their chaincode policy
++type SelectionService struct {
++	ctx         context.Client
++	channelID   string
++	pgResolvers *lazycache.Cache
++	//pgLBP            pgresolver.LoadBalancePolicy
++	ccPolicyProvider CCPolicyProvider
++	discoveryService fab.DiscoveryService
++	algorithm        Algorithm
++	cacheTimeout     time.Duration
++}
++
++type policyProviderFactory func() (CCPolicyProvider, error)
++
++func NewService(context context.Client, channelID string, discovery fab.DiscoveryService, opts ...Opt) (*SelectionService, error) {
++	return newService(context, channelID, discovery,
++		func() (CCPolicyProvider, error) {
++			return newCCPolicyProvider(context, discovery, channelID)
++		}, opts...)
++}
++
++func newService(ctx context.Client, channelID string, discovery fab.DiscoveryService, factory policyProviderFactory, opts ...Opt) (*SelectionService, error) {
++	ccPolicyProvider, err := factory()
++	if err != nil {
++		return nil, errors.WithMessage(err, "Failed to create cc policy provider")
++	}
++
++	service := &SelectionService{
++		ctx:              ctx,
++		channelID:        channelID,
++		discoveryService: discovery,
++		ccPolicyProvider: ccPolicyProvider,
++		cacheTimeout:     defaultCacheTimeout,
++		algorithm:        &algorithmImpl{},
++		//pgLBP:            pgresolver.NewRandomLBP(),
++	}
++
++	for _, opt := range opts {
++		opt(service)
++	}
++
++	if service.cacheTimeout == 0 {
++		service.cacheTimeout = ctx.EndpointConfig().Timeout(fab.SelectionServiceRefresh)
++	}
++
++	//if service.pgLBP == nil {
++	//	service.pgLBP = pgresolver.NewRandomLBP()
++	//}
++
++	service.pgResolvers = lazycache.New(
++		"PG_Resolver_Cache",
++		func(key lazycache.Key) (interface{}, error) {
++			return service.createPGResolver(key.(*resolverKey))
++		},
++		lazyref.WithAbsoluteExpiration(service.cacheTimeout),
++	)
++
++	return service, nil
++}
++
++func getChannelContext(ctx context.Client, channelID string) context.ChannelProvider {
++	//Get Channel Context
++	return func() (context.Channel, error) {
++		//Get Client Context
++		clientProvider := func() (context.Client, error) {
++			return ctx, nil
++		}
++		return contextImpl.NewChannel(clientProvider, channelID)
++	}
++}
++
++// GetEndorsersForChaincode returns the endorsing peers for the given chaincodes
++func (s *SelectionService) GetEndorsersForChaincode(chaincodes []*fab.ChaincodeCall, opts ...copts.Opt) ([]fab.Peer, error) {
++	if len(chaincodes) == 0 {
++		return nil, errors.New("no chaincode IDs provided")
++	}
++
++	//params := options.NewParams(opts)
++
++	var chaincodeIDs []string
++	for _, cc := range chaincodes {
++		chaincodeIDs = append(chaincodeIDs, cc.ID)
++	}
++
++	resolver, err := s.getPeerGroupResolver(chaincodeIDs)
++	if err != nil {
++		return nil, errors.WithMessagef(err, "Error getting peer group resolver for chaincodes [%v] on channel [%s]", chaincodeIDs, s.channelID)
++	}
++
++	/********** begin test **********/
++
++	/*
++		var endorsingPeers []fab.Peer
++		config := s.ctx.EndpointConfig()
++		channelPeers := config.ChannelPeers(s.channelID)
++		for _, peer := range peers {
++			for _, channelPeer := range channelPeers {
++				if peer.URL() == channelPeer.URL {
++					if channelPeer.EndorsingPeer == true {
++						endorsingPeer := peer
++						endorsingPeers = append(endorsingPeers, endorsingPeer)
++						break
++					}
++				}
++			}
++		}
++
++		fmt.Println("Endorsing peers:")
++		for ind, peer := range endorsingPeers {
++			fmt.Printf("  ind: %d   URL: %s\n", ind, peer.URL())
++		}
++	*/
++
++	//peersGroups := s.groupPeersByOrgs()
++	endorsers, err := s.algorithm.selectEndorsers(s.ctx, s.channelID)
++	if err != nil {
++		return nil, err
++	}
++
++	var peers []fab.Peer
++	for _, endorser := range endorsers {
++		peer := fab.Peer(endorser)
++		peers = append(peers, peer)
++	}
++
++	/*********** end test ***********/
++
++	peerGroup, err := resolver.Resolve(peers)
++	if err != nil {
++		return nil, err
++	}
++	return peerGroup.Peers(), nil
++}
++
++func (s *SelectionService) groupPeersByOrgs() []PeersGroup {
++
++	//var found bool
++	var peersGroups []PeersGroup
++
++	//if str, ok := peerCfg.GRPCOptions["ssl-target-name-override"].(string); ok {
++	//	serverHostOverride = str
++	//}
++
++	peers, err := s.discoveryService.GetPeers()
++	if err != nil {
++		return nil
++	}
++
++	fmt.Println("Channel peers:")
++	for ind, peer := range peers {
++		fmt.Printf("  ind: %d   URL: %s\n", ind, peer.URL())
++	}
++
++	/*
++
++		for _, peer := range peers {
++			found = false
++			for ind, group := range peersGroups {
++				if group.mspID == peer.MSPID() {
++					peersGroups[ind].peers = append(peersGroups[ind].peers, peer)
++					found = true
++					break
++				}
++			}
++			if found == false {
++				gr := PeersGroup{}
++				gr.mspID = peer.MSPID()
++				gr.peers = append(gr.peers, peer)
++				peersGroups = append(peersGroups, gr)
++			}
++		}
++
++		for indGroup, group := range peersGroups {
++			if len(group.peers) > 0 {
++				//sort.Slice()
++				fmt.Printf("%d. MSPID: %s count of peers: %d\n", indGroup, group.mspID, len(group.peers))
++				for indPeer, peer := range group.peers {
++					fmt.Printf("  %d. %s\n", indPeer, peer.URL())
++				}
++			}
++		}
++
++	*/
++
++	return peersGroups
++}
++
++func (s *SelectionService) getPeerGroups(chaincodes []*fab.ChaincodeCall) (map[string][]fab.Peer, error) {
++
++	policy, _ := s.ccPolicyProvider.GetChaincodePolicy(chaincodes[0].ID)
++	fmt.Printf("policy rule: %s\n", policy.Rule.String())
++	peerGroups := make(map[string][]fab.Peer)
++	return peerGroups, nil
++}
++
++// Close closes all resources associated with the service
++func (s *SelectionService) Close() {
++	s.pgResolvers.Close()
++}
++
++func (s *SelectionService) getPeerGroupResolver(chaincodeIDs []string) (pgresolver.PeerGroupResolver, error) {
++	resolver, err := s.pgResolvers.Get(newResolverKey(s.channelID, chaincodeIDs...))
++	if err != nil {
++		return nil, err
++	}
++	return resolver.(pgresolver.PeerGroupResolver), nil
++}
++
++func (s *SelectionService) createPGResolver(key *resolverKey) (pgresolver.PeerGroupResolver, error) {
++
++	var policyGroups []pgresolver.GroupRetriever
++	for _, ccID := range key.chaincodeIDs {
++		policyGroup, err := s.getPolicyGroupForCC(key.channelID, ccID)
++		if err != nil {
++			return nil, errors.WithMessagef(err, "error retrieving signature policy for chaincode [%s] on channel [%s]", ccID, key.channelID)
++		}
++		policyGroups = append(policyGroups, policyGroup)
++	}
++
++	// Perform an 'and' operation on all of the peer groups
++	aggregatePolicyGroupRetriever := func(peerRetriever pgresolver.MSPPeerRetriever) (pgresolver.GroupOfGroups, error) {
++		var groups []pgresolver.Group
++		for _, f := range policyGroups {
++			grps, err := f(peerRetriever)
++			if err != nil {
++				return nil, err
++			}
++			groups = append(groups, grps)
++		}
++		return pgresolver.NewGroupOfGroups(groups).Nof(int32(len(policyGroups)))
++	}
++
++	// Create the resolver
++	resolver, err := pgresolver.NewPeerGroupResolver(aggregatePolicyGroupRetriever, nil)
++	//resolver, err := pgresolver.NewPeerGroupResolver(aggregatePolicyGroupRetriever, s.pgLBP)
++	if err != nil {
++		return nil, errors.WithMessagef(err, "error creating peer group resolver for chaincodes [%v] on channel [%s]", key.chaincodeIDs, key.channelID)
++	}
++	return resolver, nil
++}
++
++func (s *SelectionService) getPolicyGroupForCC(channelID string, ccID string) (pgresolver.GroupRetriever, error) {
++	sigPolicyEnv, err := s.ccPolicyProvider.GetChaincodePolicy(ccID)
++	if err != nil {
++		return nil, errors.WithMessagef(err, "error querying chaincode [%s] on channel [%s]", ccID, channelID)
++	}
++	return pgresolver.CompileSignaturePolicy(sigPolicyEnv)
++}
+diff --git a/pkg/common/providers/fab/channel.go b/pkg/common/providers/fab/channel.go
+index 681a2974..5922729e 100644
+--- a/pkg/common/providers/fab/channel.go
++++ b/pkg/common/providers/fab/channel.go
+@@ -9,8 +9,8 @@ package fab
+ import (
+ 	reqContext "context"
+ 
+-	"github.com/hyperledger/fabric-protos-go/common"
+-	mspCfg "github.com/hyperledger/fabric-protos-go/msp"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
++	mspCfg "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/msp"
+ )
+ 
+ // OrgAnchorPeer contains information about an anchor peer on this channel
+@@ -20,6 +20,12 @@ type OrgAnchorPeer struct {
+ 	Port int32
+ }
+ 
++// OrgEndorserPeer contains information about an endorsing peer on this channel
++type OrgEndorserPeer struct {
++	Org  string
++	Address string
++}
++
+ // ChannelConfig allows for interaction with peer regarding channel configuration
+ type ChannelConfig interface {
+ 
+@@ -55,6 +61,7 @@ type ChannelCfg interface {
+ 	BlockNumber() uint64
+ 	MSPs() []*mspCfg.MSPConfig
+ 	AnchorPeers() []*OrgAnchorPeer
++	Endorsers() []*OrgEndorserPeer
+ 	Orderers() []string
+ 	Versions() *Versions
+ 	HasCapability(group ConfigGroupKey, capability string) bool
+diff --git a/pkg/fab/chconfig/chconfig.go b/pkg/fab/chconfig/chconfig.go
+index 1adae1e4..d4b4de48 100644
+--- a/pkg/fab/chconfig/chconfig.go
++++ b/pkg/fab/chconfig/chconfig.go
+@@ -12,9 +12,6 @@ import (
+ 	"regexp"
+ 
+ 	"github.com/golang/protobuf/proto"
+-	"github.com/hyperledger/fabric-protos-go/common"
+-	mb "github.com/hyperledger/fabric-protos-go/msp"
+-	pb "github.com/hyperledger/fabric-protos-go/peer"
+ 	channelConfig "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/common/channelconfig"
+ 	imsp "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/msp"
+ 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/retry"
+@@ -25,6 +22,9 @@ import (
+ 	contextImpl "github.com/hyperledger/fabric-sdk-go/pkg/context"
+ 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/channel"
+ 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/resource"
++	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
++	mb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/msp"
++	pb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/peer"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -64,6 +64,7 @@ type ChannelCfg struct {
+ 	blockNumber  uint64
+ 	msps         []*mb.MSPConfig
+ 	anchorPeers  []*fab.OrgAnchorPeer
++	endorsers    []*fab.OrgEndorserPeer
+ 	orderers     []string
+ 	versions     *fab.Versions
+ 	capabilities map[fab.ConfigGroupKey]map[string]bool
+@@ -95,6 +96,11 @@ func (cfg *ChannelCfg) AnchorPeers() []*fab.OrgAnchorPeer {
+ 	return cfg.anchorPeers
+ }
+ 
++// AnchorPeers returns anchor peers
++func (cfg *ChannelCfg) Endorsers() []*fab.OrgEndorserPeer {
++	return cfg.endorsers
++}
++
+ // Orderers returns orderers
+ func (cfg *ChannelCfg) Orderers() []string {
+ 	return cfg.orderers
+@@ -385,6 +391,7 @@ func extractConfig(channelID string, block *common.Block) (*ChannelCfg, error) {
+ 		blockNumber:  block.Header.Number,
+ 		msps:         []*mb.MSPConfig{},
+ 		anchorPeers:  []*fab.OrgAnchorPeer{},
++		endorsers:    []*fab.OrgEndorserPeer{},
+ 		orderers:     []string{},
+ 		versions:     versions,
+ 		capabilities: make(map[fab.ConfigGroupKey]map[string]bool),
+@@ -509,6 +516,22 @@ func loadAnchorPeers(configValue *common.ConfigValue, configItems *ChannelCfg, o
+ 	return nil
+ }
+ 
++func loadEndorsers(configValue *common.ConfigValue, configItems *ChannelCfg, org string) error {
++	endorsers := &pb.Endorsers{}
++	err := proto.Unmarshal(configValue.Value, endorsers)
++	if err != nil {
++		return errors.Wrap(err, "unmarshal endorsers from config failed")
++	}
++
++	if len(endorsers.Endorsers) > 0 {
++		for _, endorser := range endorsers.Endorsers {
++			oep := &fab.OrgEndorserPeer{Org: org, Address: endorser.Address}
++			configItems.endorsers = append(configItems.endorsers, oep)
++		}
++	}
++	return nil
++}
++
+ func loadMSPKey(configValue *common.ConfigValue, configItems *ChannelCfg) error {
+ 	mspConfig := &mb.MSPConfig{}
+ 	err := proto.Unmarshal(configValue.Value, mspConfig)
+@@ -561,6 +584,10 @@ func loadConfigValue(configItems *ChannelCfg, key string, versionsValue *common.
+ 		if err := loadAnchorPeers(configValue, configItems, org); err != nil {
+ 			return err
+ 		}
++	case channelConfig.EndorsersKey:
++		if err := loadEndorsers(configValue, configItems, org); err != nil {
++			return err
++		}
+ 	case channelConfig.MSPKey:
+ 		if err := loadMSPKey(configValue, configItems); err != nil {
+ 			return err
